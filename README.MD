@@ -17,3 +17,12 @@ Options
 
 Note:  I take no credit for the rules in the system, Most of them are from GITHUB and similar places.  They may be slightly modified for myself.
        The only thing I take credit for is the yara_check.py script., the rest is just the open source support files
+
+
+Need to create the folders
+html
+logs
+malware
+reports
+
+These will be created automatically later, they just havent been done yet.
