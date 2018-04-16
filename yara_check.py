@@ -4,7 +4,7 @@
 #                purpose: Collect many yara rule files and
 #                         run them against possibly malicious files
 #                Author: Adam LeTang (Moros)
-#                Version: 0.0.2a
+#                Version: 0.0.3a
 #                ChangeLog:
 #                   1.  13 april 2018 - Moros - 
 #			- Fixed an error where running all rule files at once
@@ -14,12 +14,15 @@
 #                       - Fixed logic problem that kept the levels from printing in the right order
 #	            2. 14 April 2018 - Moros - 
 #                        - created html build system.
+#                   3. 15 April 2018 - Moros -
+#                        - added reset functionality
+#                        - Added daemon functionality
+#                        - Fixed logic problem to make matching more efficent
 #                ToDo:
 #                   1.  Implement some kind of multi threading to make it 
 #                       even faster
 #                   2.  Create a rule updater that will reach out someplace and get all the new rules
 #                   3.  Website is very simple, make it better.
-#                   4.  Set up the reset to it resets the HTML files, and removes malware.
 #		    5.  Create documentations
 #       
 #                Bugs:
@@ -28,6 +31,11 @@
 #	
 #           	       seems it may be because of poorly written rules, i rewrote the one that
 #                      seems to hit alot and that looks like its helping.
+#
+#                      Hmm...not sure waht i fucked up, but it seems to be picking everything
+#                      up on base64 detection....and nothing else, need to figure out why.
+#                      -  Tried running this on ghost, it picked everything else up
+#                         including base64, might be a bad rule....
 ###########################################
 
 import yara
@@ -35,19 +43,33 @@ import os
 import sys
 from datetime import datetime
 import argparse
-from time import time
+from time import time, sleep
 import hashlib
+from shutil import copyfile, move
 
 #defaults
 verbose = False
 auto_open = False
 errors = False
+daemon_mode = False
 
 #globals
 errorlog = "logs/errors"
 
 def reset():
-   pass
+   print "reseting to defaults"
+   for root, dirs, files in os.walk(os.path.abspath('html/')):
+      for html_file in files:
+         os.remove('%s/%s' %(root,html_file))
+   input = raw_input("Do you want to delete the malware from malware/? \n did you back it up? \n (yes/no)>> ")
+   if input.lower() == 'yes':
+      for root, dirs, files in os.walk(os.path.abspath('malware/')):
+         for malware_file in files:
+            os.remove('%s/%s' %(root,malware_file))
+      print "all malware files removed"
+   copyfile('backup/index.html', 'html/index.html') 
+   print "all html files removed"
+   sys.exit()
 
 def getfilehash(file):
    BLOCKSIZE = 65536
@@ -68,12 +90,31 @@ def getfilehash(file):
 #
 ####
 def makehtml(data, file, hash, severity):
+   if isinstance(data, (int, long)):
+      rule = "no hits"
+   else:
+      rule = data.rule
+   if severity == 0:
+      bg_color = "green"
+   elif severity == 1:
+      bg_color = "red"
+   elif severity == 2:
+      bg_color = "orange"
+   elif severity == 3:
+      bg_color = "yellow"
+   elif severity == 4:
+      bg_color = "blue"
+   elif severity == 5:
+      bg_color = "aqua"
+   else:
+      bg_color = "brown"
    html_files = []
    date = datetime.now().strftime("%y-%m-%d %H:%M")
    for root, dirs, files in os.walk(os.path.abspath('html/')):
       for html_file in files:
          html_files.append("%s/%s" %(root, html_file))
    if not any(hash in s for s in html_files):
+      
       html_file = 'html/%s.html' %hash
       string_list = []
       string_list.append("<html>\n")
@@ -83,7 +124,7 @@ def makehtml(data, file, hash, severity):
       string_list.append("<body>\n")
       string_list.append("<h1>%s<br>SHA1: %s</h1>\n" % (file,hash))
       string_list.append("<h2>The file triggered on the following rules:<h2>\n") 
-      string_list.append("<h3>%s</h3>\n" %data.rule)
+      string_list.append("<h3font color='%s'>%s</h3>\n" % (bg_color, rule))
       try:
          string_list.append("<h3>%s</h3>\n" %data.meta['description'])
       except:
@@ -110,13 +151,14 @@ def makehtml(data, file, hash, severity):
  
    else:
       index = 0
+      if severity == 0:
+         return
       html_file = 'html/%s.html' %hash
       write_file = open(html_file, 'r')
       contents = write_file.readlines()
       write_file.close() 
       write_index = contents.index('</body>\n')
-      string = "<h2>The file triggered on the following rules:<h2>\n" 
-      string += "<h3>%s</h3>\n" %data.rule
+      string = "<h3font color='%s'>%s</h3>\n" % (bg_color, rule)
       try:
          string += "<h3>%s</h3>\n" %data.meta['description']
       except:
@@ -140,15 +182,12 @@ def makehtml(data, file, hash, severity):
       write_file.write(a)
       write_file.close()                      
 
-
-
 def mycallback(data):
-
   if data['matches']:
      print data
   return yara.CALLBACK_CONTINUE, data
 
-def start(path):
+def start(path, run_count):
    file_path=path
    rule_path="rules/"
    rule_files = []
@@ -157,13 +196,17 @@ def start(path):
    for root, dirs, files in os.walk(os.path.abspath(rule_path)):
       for file in files:
          rule_files.append("%s/%s" %(root, file))
-   print ('running against rules: \n')
+
    for i in rule_files:
       rule_count +=1
    if not rule_files:
       print "there were no rule files loaded"
       sys.exit()
-   print ("Loaded %s rules files to run against") % rule_count
+   if daemon_mode and run_count == 0:
+      print ("Loaded %s rules files to run against") % rule_count
+   elif not daemon_mode:
+      print "no"
+      print ("Loaded %s rules files to run against") % rule_count      
 
    scan_file_count = 0
    for path, dirs, files in os.walk(file_path):
@@ -174,42 +217,48 @@ def start(path):
             file_list.append(os.path.join(path, bad_file))
             scan_file_count +=1
    if not file_list:
-      print ("there were no files to scan")
-      sys.exit()
+      if not daemon_mode:
+         print ("there were no files to scan")
+         sys.exit()
+      else:
+         return(0,0)
    
    print ("Loaded %s files to scan") %scan_file_count
 
-
    match_count = 0
    results = []
-   for j in rule_files:
-      try:
-         rules = yara.compile(j, externals={'filename': '', 'filepath': '', 'extension': '', 'filetype': '', 'service': '', 'sync':''})
-      except Exception as e:
-         date = datetime.now().strftime("%y-%m-%d-%H-%M")
-         log_file = open(errorlog, 'w')
-         string = "time: %s; broke on the compile rule_file: %s;error: %s\n" %(date, j, e)
-         log_file.write(string)
-         log_file.close()
-         errors = True
-         
-      split_file_name = j.split('/')[-1]
-      for file_name in file_list:
-         matches = {}
-         string = ''
+
+   for file_name in file_list:
+      filehash = getfilehash(file_name.strip())
+      matches = []
+      string = ''
+      for j in rule_files:
+         split_file_name = j.split('/')[-1]
+         try:
+            rules = yara.compile(j, externals={'filename': '', 'filepath': '', 'extension': '', 'filetype': '', 'service': '', 'sync':''})
+         except Exception as e:
+            date = datetime.now().strftime("%y-%m-%d-%H-%M")
+            log_file = open(errorlog, 'w')
+            string = "time: %s; broke on the compile rule_file: %s;error: %s\n" %(date, j, e)
+            log_file.write(string)
+            log_file.close()
+            errors = True
+             
          if verbose:
             try:
-               matches= rules.match(file_name.strip(), callback=mycallback)
+               matches.update(rules.match(file_name.strip()), callback=mycallback)
             except Exception as e:
-                date = datetime.now().strftime("%y-%m-%d-%H-%M")
-                log_file = open(errorlog, 'w')
-                string = "time: %s; broke on the match; rule_file: %s; file_name: %s; error: %s\n" %(date, j, file_name, e)
-                log_file.write(string)
-                log_file.close()
-                errors = True
+               date = datetime.now().strftime("%y-%m-%d-%H-%M")
+               log_file = open(errorlog, 'w')
+               string = "time: %s; broke on the match; rule_file: %s; file_name: %s; error: %s\n" %(date, j, file_name, e)
+               log_file.write(string)
+               log_file.close()
+               errors = True
          else:
             try:
-               matches = rules.match(file_name.strip())
+               match = rules.match(file_name.strip())
+               if match:
+                  matches.append(match)
             except Exception as e:
                date = datetime.now().strftime("%y-%m-%d-%H-%M")
                log_file = open(errorlog, 'w')
@@ -218,10 +267,12 @@ def start(path):
                log_file.close()
                errors = True
 
-         if not matches:
-            continue
-         else:
-            for i in matches:
+      if not matches:
+         print "no matches here"
+         makehtml(0, file_name.strip(), filehash, 0)
+      else:
+         for j in matches:
+            for i in j:
                status = ''
                description = ''
                rule_level = 0
@@ -250,7 +301,7 @@ def start(path):
                else:
                   rule_level = 10
                   status = "unclassified rule"
-               filehash = getfilehash(file_name.strip())
+
                string = "Alert status: %s\n" %status
                string += "File name: %s\n" % file_name.strip()
                string += "rulefile: %s\n" %j
@@ -290,30 +341,53 @@ def write_data(results, count):
    else:
       print ("No fields matched")
 
+def daemon(malware_path):
+   run_count = 0
+   while True:
+      results, count = start(malware, 0)
+      if not count == 0:
+         write_data(results, count)  
+         for root, dirs, files in os.walk(os.path.abspath('malware/')):
+            for malware_file in files:
+               move('%s/%s' %(root, malware_file), "backup/malware/%s" %malware_file)
+      run_count +=1         
+      sleep(60)
+
 if __name__ == "__main__":
    start_time = time()
    # construct the argument parse and parse the arguments
    ap = argparse.ArgumentParser()
-   ap.add_argument("-p", "--path", required=True,
-	help="path to malware")
+   ap.add_argument("-d", "--daemon", help="puts the script in daemon mode, when the script has parsed the malware it will place it in /backup/malware.  The script will continuely check the malware path, so you can add new malware at any time and it will parse it, will not print to console, only to HTML and REPORTS",
+        action='store_true') 
+   ap.add_argument("-p", "--path", help="path to malware defualt is malware/")
    ap.add_argument("-v", "--verbose", required=False,
         action='store_true', help="Triggers verbose output")
    ap.add_argument("-o", "--auto", action='store_true',
         help="Automatically opens the output file \nNote: Not implemented")
+   ap.add_argument("-r", "--reset", action='store_true', help="This will reset all the files")
+
    args = vars(ap.parse_args())
    #End of arguments
 
-   malware = args['path']
+   if args['path']:
+      malware = args['path']
+   else:
+      malware = 'malware/'
    if args['verbose']:
       print "setting logging to verbose, alot of shit is coming to the screen"
       raw_input("press enter to continue")
       verbose = True
    if args['auto']:
       auto_open = True
-   print "loading possibly malicious files located here: \n%s" %malware
-   results, count = start(malware)
-   write_data(results, count)  
-   print ("Run is done")
-   print start_time
-   print time()
-   print ("Total runtime: %f seconds") % (time() - start_time)           
+   if args['reset']:
+      reset()
+   if args['daemon']:
+      daemon_mode = True
+      auto_open = True
+      daemon(malware)
+   else:
+      print "loading possibly malicious files located here: \n%s" %malware
+      results, count = start(malware, 0)
+      write_data(results, count)  
+      print ("Run is done")
+      print ("Total runtime: %f seconds") % (time() - start_time)           
