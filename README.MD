@@ -1,4 +1,7 @@
  
+Needs alot of work, just leaving here for now for storage.
+
+
 Designed for running on linux, in theory should work on windows hasnt been tested
 
 Designed to run lots of Yara rules, against lots of Malicious files,
