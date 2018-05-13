@@ -1,5 +1,7 @@
  
-Needs alot of work, just leaving here for now for storage.
+Needs alot of work, just leaving here for now for storage..
+
+Deveolped for a place that you could use python but not executables.
 
 
 Designed for running on linux, in theory should work on windows hasnt been tested
